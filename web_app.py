@@ -26,6 +26,14 @@ from run_renewal import (
 )
 from modules.raroc import compute_full_scr
 from modules.versioning import save_quote
+from modules.uw_sheet import (
+    TreatyHeader, build_uw_sheet_from_pack, add_xol_layers_from_pack,
+    prop_to_dataframe, nonprop_to_dataframe, write_uw_sheet_to_excel,
+    uw_sheet_to_html,
+)
+from modules.wording_clauses import (
+    get_standard_package, list_all_clauses, TreatyType,
+)
 
 
 # ─── Page config ──────────────────────────────────────────────────────────────
@@ -112,6 +120,25 @@ if tmp_folder:
     with col4:
         annee = st.number_input("Année", min_value=2020, max_value=2035,
                                   value=2026, step=1)
+
+    # Champs UW Sheet supplémentaires
+    with st.expander("📋 Champs UW Sheet (slip professionnel)", expanded=False):
+        col1, col2, col3 = st.columns(3)
+        with col1:
+            broker = st.text_input("Broker", value="")
+            inception = st.text_input("Inception Date", value=f"{annee}-01-01")
+        with col2:
+            leader = st.text_input("Leader Reinsurer", value="SMGA AME")
+            expiry = st.text_input("Expiry Date", value=f"{annee}-12-31")
+        with col3:
+            country = st.text_input("Country / Territory", value="")
+            underwriter = st.text_input("Underwriter (you)", value="")
+        period_basis = st.selectbox("Period basis",
+                                      options=["RAD (Risks Attaching During)",
+                                                "LOD (Losses Occurring During)"],
+                                      index=0)
+        business_class = st.text_input("Business class",
+                                         value="All classes (treaty whole account)")
 
 
     # ─── Étape 3 : Scan auto ──────────────────────────────────────────────
@@ -362,17 +389,105 @@ if tmp_folder:
         _write_full_workbook(out_path, pack, shares_resolved, treaty_metrics,
                               bouquet, scr, decision, currency, config["fx_to_usd"])
 
+        # ─── UW SHEET professionnel (slip souscripteur) ─────────────────────
         st.divider()
-        st.subheader("📥 Téléchargement")
-        with open(out_path, "rb") as f:
-            st.download_button(
-                label="⬇️ Télécharger Workbook Excel complet",
-                data=f.read(),
-                file_name=out_path.name,
-                mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
-                type="primary",
-                use_container_width=True,
-            )
+        st.header("📋 UW Sheet — Slip Souscripteur Professionnel")
+
+        uw_header = TreatyHeader(
+            company=cedante, broker=broker, leader=leader,
+            inception_date=inception, expiry_date=expiry,
+            original_currency=currency, exchange_rate_to_usd=fx,
+            period_basis=period_basis, business_class=business_class,
+            country=country, underwriter=underwriter,
+            quote_id=snap.quote_id,
+        )
+        uw_sheet = build_uw_sheet_from_pack(pack, shares_resolved,
+                                              treaty_metrics, uw_header)
+        add_xol_layers_from_pack(uw_sheet, pack, share_pct=0.10)
+
+        # Sélecteur clauses
+        with st.expander("📜 Wording / Clauses / Exclusions", expanded=False):
+            col1, col2 = st.columns(2)
+            with col1:
+                tt_choice = st.selectbox(
+                    "Type de traité (pour package standard)",
+                    options=["Quote Share / Surplus",
+                             "XL Working", "XL Cat", "Whole Account XL"],
+                )
+            with col2:
+                bc = st.text_input("Branche", value="general")
+
+            tt_map = {
+                "Quote Share / Surplus": TreatyType.QS,
+                "XL Working": TreatyType.XL_WORKING,
+                "XL Cat": TreatyType.XL_CAT,
+                "Whole Account XL": TreatyType.WHOLE_ACCOUNT_XL,
+            }
+            pkg = get_standard_package(tt_map[tt_choice], business_class=bc)
+            uw_sheet.clauses = pkg["clauses"]
+            uw_sheet.exclusions = pkg["exclusions"]
+            uw_sheet.warranties = pkg["warranties"]
+
+            st.write(f"**{len(pkg['clauses'])}** clauses + "
+                       f"**{len(pkg['exclusions'])}** exclusions + "
+                       f"**{len(pkg['warranties'])}** warranties chargées.")
+            with st.expander("Voir liste complète"):
+                for label, items in [("Clauses", pkg["clauses"]),
+                                       ("Exclusions", pkg["exclusions"]),
+                                       ("Warranties", pkg["warranties"])]:
+                    st.markdown(f"**{label}**")
+                    for i, c in enumerate(items, 1):
+                        st.markdown(f"  {i}. {c[:200]}...")
+
+        # Affichage tables Prop + Non Prop
+        st.subheader("Treaties Proportionals")
+        if uw_sheet.prop_lines:
+            st.dataframe(prop_to_dataframe(uw_sheet),
+                          use_container_width=True, hide_index=True)
+        else:
+            st.info("Aucun traité proportionnel.")
+
+        st.subheader("Treaties Non-Proportionals")
+        if uw_sheet.nonprop_lines:
+            st.dataframe(nonprop_to_dataframe(uw_sheet),
+                          use_container_width=True, hide_index=True)
+        else:
+            st.info("Aucun traité non-proportionnel.")
+
+        # Grand total
+        gt = uw_sheet.grand_total()
+        st.subheader("Grand Total — Our Share")
+        col1, col2, col3 = st.columns(3)
+        col1.metric("Total EPI Our Share",
+                     f"{gt['total_epi_our_share_usd']:,.0f} USD")
+        col2.metric("Total Limit Our Share",
+                     f"{gt['total_limit_our_share_usd']:,.0f} USD")
+        col3.metric("Expected Total Loss",
+                     f"{gt['expected_total_loss_usd']:,.0f} USD")
+
+        # Génère UW Sheet XLSX
+        uw_path = Path(tempfile.mkdtemp()) / f"UW_Sheet_{cedante.replace(' ','_')}_{datetime.now():%Y%m%d_%H%M%S}.xlsx"
+        write_uw_sheet_to_excel(uw_sheet, str(uw_path), include_clauses=True)
+
+        st.divider()
+        st.subheader("📥 Téléchargements")
+        col1, col2 = st.columns(2)
+        with col1:
+            with open(out_path, "rb") as f:
+                st.download_button(
+                    label="⬇️ Workbook Analyse Complet",
+                    data=f.read(), file_name=out_path.name,
+                    mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+                    use_container_width=True,
+                )
+        with col2:
+            with open(uw_path, "rb") as f:
+                st.download_button(
+                    label="⬇️ UW Sheet (Slip Pro)",
+                    data=f.read(), file_name=uw_path.name,
+                    mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+                    type="primary", use_container_width=True,
+                )
 
 else:
     st.info("👆 Upload des fichiers ou utilise le dataset démo pour commencer.")
