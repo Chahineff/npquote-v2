@@ -1,0 +1,22 @@
+{
+  "cedante": "Al Wataniya Insurance",
+  "currency": "EGP",
+  "annee": 2026,
+  "shares": {
+    "fire_qs":               0.05,
+    "fire_surplus":          0.00,
+    "engineering_qs":        0.25,
+    "engineering_surplus":   0.20,
+    "ga_qs":                 0.20,
+    "ga_surplus":            0.20,
+    "fire_facility":         0.10,
+    "general accident_facility": 0.15,
+    "marine_facility":       0.00,
+    "motor_facility":        0.00
+  },
+  "default_share": 0.00,
+  "target_roe": 0.12,
+  "max_combined_ratio": 0.95,
+  "market_lr_priori": 0.65,
+  "fx_to_usd": { "EGP": 0.021, "USD": 1.0 }
+}

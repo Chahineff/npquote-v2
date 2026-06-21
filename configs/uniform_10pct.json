@@ -1,0 +1,18 @@
+{
+  "cedante": "Al Wataniya Insurance",
+  "currency": "EGP",
+  "annee": 2026,
+  "uniform_share": 0.10,
+  "target_roe": 0.12,
+  "max_combined_ratio": 0.95,
+  "market_lr_priori": 0.65,
+  "fx_to_usd": {
+    "EGP": 0.021,
+    "EUR": 1.08,
+    "USD": 1.00,
+    "GBP": 1.27,
+    "MAD": 0.10,
+    "AED": 0.272,
+    "MGA": 0.00022
+  }
+}

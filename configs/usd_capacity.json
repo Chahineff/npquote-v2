@@ -1,0 +1,20 @@
+{
+  "cedante": "Al Wataniya Insurance",
+  "currency": "EGP",
+  "annee": 2026,
+  "_comment": "Capacités exprimées en USD par traité. Le pipeline calcule la part% implicite via FX.",
+  "usd_capacity": {
+    "fire_qs":               25000,
+    "engineering_qs":       100000,
+    "engineering_surplus":   50000,
+    "ga_qs":                 15000,
+    "ga_surplus":             5000,
+    "fire_facility":         10000,
+    "general accident_facility": 5000
+  },
+  "default_share": 0.00,
+  "target_roe": 0.15,
+  "max_combined_ratio": 0.92,
+  "market_lr_priori": 0.65,
+  "fx_to_usd": { "EGP": 0.021, "USD": 1.0 }
+}

@@ -1,0 +1,43 @@
+# Données sensibles courtier / cédantes — NE JAMAIS COMMIT
+*.xlsx
+*.xlsm
+*.xls
+*.csv
+configs/interactif_*.json
+NPquote_v2_*.xlsx
+NPquote_v2_demo.xlsx
+
+# Outputs analyse
+output/
+outputs/
+results/
+*.pdf
+
+# Versioning local (audit trail)
+.npquote_v2_versions/
+
+# Python
+__pycache__/
+*.pyc
+*.pyo
+.pytest_cache/
+*.egg-info/
+.venv/
+venv/
+
+# macOS
+.DS_Store
+.AppleDouble
+.LSOverride
+
+# IDE
+.vscode/
+.idea/
+*.swp
+
+# Streamlit
+.streamlit/secrets.toml
+
+# Temp
+*.tmp
+*.log
