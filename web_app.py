@@ -77,10 +77,10 @@ col1, col2 = st.columns([2, 1])
 
 with col1:
     uploaded_files = st.file_uploader(
-        "Drag-drop fichiers courtier (.xlsx, .xlsm, .xls, .ods, .csv)",
-        type=["xlsx", "xlsm", "xls", "ods", "csv"],
+        "Drag-drop tous fichiers Excel courtier (.xlsx, .xlsm)",
+        type=["xlsx", "xlsm"],
         accept_multiple_files=True,
-        help="Multi-format : Excel (xlsx/xlsm/xls), LibreOffice (ods), CSV.",
+        help="Tu peux glisser plusieurs fichiers en une fois.",
     )
 
 with col2:
@@ -143,16 +143,8 @@ if tmp_folder:
 
     # ─── Étape 3 : Scan auto ──────────────────────────────────────────────
     st.header("3️⃣ Scan + Détection Auto")
-    try:
-        with st.spinner("Scanning renewal pack..."):
-            pack = parse_renewal_folder(tmp_folder, cedante=cedante, currency=currency)
-    except Exception as e:
-        st.error(f"Erreur scan : {e}")
-        st.info("Vérifie : fichiers ouvrables, pas corrompus, format Excel/ODS/CSV valide.")
-        with st.expander("Détails techniques"):
-            import traceback
-            st.code(traceback.format_exc())
-        st.stop()
+    with st.spinner("Scanning renewal pack..."):
+        pack = parse_renewal_folder(tmp_folder, cedante=cedante, currency=currency)
 
     col1, col2, col3, col4 = st.columns(4)
     col1.metric("Fichiers", pack.detection_report['n_files'])
@@ -161,14 +153,7 @@ if tmp_folder:
     col4.metric("Couches XOL", len(pack.xol_layers))
 
     if not pack.treaties:
-        st.warning("⚠ Aucun traité QS/Surplus/XOL détecté automatiquement.")
-        with st.expander("Voir fichiers scannés"):
-            for fname, finfo in pack.detection_report['files'].items():
-                st.write(f"**{fname}**")
-                for sh in finfo.get('sheets', []):
-                    st.caption(f"  • {sh['name']} (type={sh['type']}, LOB={sh['lob']})")
-        st.info("Tip : nomme les feuilles avec mots-clés QS/Surplus/Statistics/XOL "
-                 "pour détection auto. Sinon utilise format Al Wataniya (cf demo).")
+        st.error("⚠ Aucun traité détecté. Vérifie format fichiers courtier.")
         st.stop()
 
     # Tableau traités détectés
