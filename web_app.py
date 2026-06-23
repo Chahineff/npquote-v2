@@ -330,6 +330,7 @@ if tmp_folder:
     # ─── Run ──────────────────────────────────────────────────────────────
     st.divider()
     if st.button("🚀 Lancer l'Analyse", type="primary", use_container_width=True):
+      try:
         with st.spinner("Calcul en cours..."):
             shares_resolved = determine_shares(pack, config, config["fx_to_usd"])
 
@@ -559,6 +560,12 @@ if tmp_folder:
                     mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
                     type="primary", use_container_width=True,
                 )
+      except Exception as e:
+        st.error(f"❌ Erreur pendant l'analyse : {e}")
+        st.info("Vérifie les données d'entrée. Si problème persiste, voir détails ci-dessous.")
+        with st.expander("Détails techniques de l'erreur (à partager avec support)"):
+            import traceback
+            st.code(traceback.format_exc())
 
 else:
     st.info("👆 Upload des fichiers ou utilise le dataset démo pour commencer.")
