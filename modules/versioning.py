@@ -47,6 +47,25 @@ def _compute_inputs_hash(inputs: dict) -> str:
     return hashlib.sha256(canonical.encode()).hexdigest()[:16]
 
 
+def _get_writable_versions_dir() -> Path:
+    """Trouve un dossier writable pour les snapshots.
+
+    Streamlit Cloud : ~ peut être restreint → fallback /tmp.
+    """
+    candidates = [VERSIONS_DIR, Path("/tmp") / ".npquote_v2_versions",
+                   Path.cwd() / ".npquote_v2_versions"]
+    for d in candidates:
+        try:
+            d.mkdir(parents=True, exist_ok=True)
+            test_file = d / ".write_test"
+            test_file.write_text("ok")
+            test_file.unlink()
+            return d
+        except Exception:
+            continue
+    return Path("/tmp")
+
+
 def save_quote(
     cedante: str,
     annee: int,
@@ -62,8 +81,12 @@ def save_quote(
     """Persiste une nouvelle version de cotation.
 
     Auto-versioning : v1, v2, v3, ... par (cédante, année).
+    Cloud-safe : fallback /tmp si home dir read-only.
     """
-    versions_dir.mkdir(parents=True, exist_ok=True)
+    try:
+        versions_dir.mkdir(parents=True, exist_ok=True)
+    except (OSError, PermissionError):
+        versions_dir = _get_writable_versions_dir()
     cedante_safe = cedante.replace(" ", "_").replace("/", "_")
     pattern = f"{cedante_safe}_{annee}_v*.json"
     existing = sorted(versions_dir.glob(pattern))
@@ -80,7 +103,11 @@ def save_quote(
         notes=notes,
     )
     path = versions_dir / f"{quote_id}.json"
-    path.write_text(json.dumps(snap.to_dict(), default=str, indent=2))
+    try:
+        path.write_text(json.dumps(snap.to_dict(), default=str, indent=2))
+    except (OSError, PermissionError) as e:
+        # Cloud read-only fallback : in-memory only
+        snap.notes = (snap.notes or "") + f" [Storage unavailable: {e}]"
     return snap
 
 
