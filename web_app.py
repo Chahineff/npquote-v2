@@ -330,49 +330,63 @@ if tmp_folder:
     # ─── Run ──────────────────────────────────────────────────────────────
     st.divider()
     if st.button("🚀 Lancer l'Analyse", type="primary", use_container_width=True):
+      st.info("✅ Click détecté — calcul en cours...")
+      progress_bar = st.progress(0, text="Init...")
       try:
-        with st.spinner("Calcul en cours..."):
-            shares_resolved = determine_shares(pack, config, config["fx_to_usd"])
+        progress_bar.progress(10, text="Determining shares...")
+        shares_resolved = determine_shares(pack, config, config["fx_to_usd"])
 
-            # Treaty metrics
-            treaty_metrics = []
-            historical_lrs = {}
-            for key, info in shares_resolved.items():
-                if info["share_pct"] <= 0:
-                    continue
-                m = compute_treaty_metrics(
-                    info["treaty"], info["share_pct"], info["prime_100_local"],
-                    market_lr_priori=market_lr,
-                )
-                if m:
-                    treaty_metrics.append(m)
-                    historical_lrs[key] = info["treaty"].by_uy['loss_ratio'].values
+        # Diagnostic visible
+        n_active = sum(1 for v in shares_resolved.values() if v["share_pct"] > 0)
+        st.write(f"  → {n_active} traités avec part > 0")
+        if n_active == 0:
+            st.warning("⚠ Aucun traité actif. Augmente parts dans Étape 4.")
+            st.stop()
 
-            if not treaty_metrics:
-                st.error("⚠ Aucune part > 0. Augmente parts pour analyser.")
-                st.stop()
-
-            bouquet = aggregate_bouquet_with_copula(treaty_metrics, historical_lrs)
-
-            # SCR
-            premiums_by_lob = {}
-            for m in treaty_metrics:
-                s2_lob = map_lob_to_s2(m['lob_treaty'].split(' ')[0].lower(),
-                                        m['lob_treaty'].split(' ')[1].lower())
-                premiums_by_lob[s2_lob] = premiums_by_lob.get(s2_lob, 0) + m['prime_share_local']
-            reserves_by_lob = {k: v * 0.5 for k, v in premiums_by_lob.items()}
-            pml = {"manmade_fire": bouquet['total_prime'] * 2.0}
-            scr = compute_full_scr(premiums_by_lob, reserves_by_lob, pml)
-            decision = make_decision(bouquet, target_roe=target_roe, max_cor=max_cor)
-
-            # Save version
-            snap = save_quote(
-                cedante=cedante, annee=int(annee),
-                inputs={"config": config},
-                outputs={**bouquet, "scr_total": scr.scr_total},
-                decision=decision["verdict"],
-                decision_reasons=decision["reasons"],
+        progress_bar.progress(30, text=f"Computing metrics for {n_active} treaties...")
+        treaty_metrics = []
+        historical_lrs = {}
+        for key, info in shares_resolved.items():
+            if info["share_pct"] <= 0:
+                continue
+            m = compute_treaty_metrics(
+                info["treaty"], info["share_pct"], info["prime_100_local"],
+                market_lr_priori=market_lr,
             )
+            if m:
+                treaty_metrics.append(m)
+                historical_lrs[key] = info["treaty"].by_uy['loss_ratio'].values
+
+        if not treaty_metrics:
+            st.error("⚠ Aucune part > 0. Augmente parts pour analyser.")
+            st.stop()
+
+        progress_bar.progress(60, text="Aggregating bouquet with copula...")
+        bouquet = aggregate_bouquet_with_copula(treaty_metrics, historical_lrs)
+
+        # SCR
+        progress_bar.progress(75, text="Computing Solvency II SCR...")
+        premiums_by_lob = {}
+        for m in treaty_metrics:
+            s2_lob = map_lob_to_s2(m['lob_treaty'].split(' ')[0].lower(),
+                                    m['lob_treaty'].split(' ')[1].lower())
+            premiums_by_lob[s2_lob] = premiums_by_lob.get(s2_lob, 0) + m['prime_share_local']
+        reserves_by_lob = {k: v * 0.5 for k, v in premiums_by_lob.items()}
+        pml = {"manmade_fire": bouquet['total_prime'] * 2.0}
+        scr = compute_full_scr(premiums_by_lob, reserves_by_lob, pml)
+        decision = make_decision(bouquet, target_roe=target_roe, max_cor=max_cor)
+
+        # Save version
+        progress_bar.progress(85, text="Saving snapshot...")
+        snap = save_quote(
+            cedante=cedante, annee=int(annee),
+            inputs={"config": config},
+            outputs={**bouquet, "scr_total": scr.scr_total},
+            decision=decision["verdict"],
+            decision_reasons=decision["reasons"],
+        )
+        progress_bar.progress(100, text="Done — rendering results...")
+        progress_bar.empty()
 
         # ─── Résultats ───
         st.success(f"✅ Analyse terminée. Snapshot : `{snap.quote_id}`")
