@@ -114,7 +114,8 @@ def scan_folder(folder: Path, currency_hint: str = None) -> dict:
     if not folder.exists():
         raise FileNotFoundError(folder)
 
-    files = list(folder.glob("*.xlsx")) + list(folder.glob("*.xlsm"))
+    files = (list(folder.glob("*.xlsx")) + list(folder.glob("*.xlsm"))
+             + list(folder.glob("*.xls")) + list(folder.glob("*.ods")))
     detected = {
         "folder": str(folder),
         "n_files": len(files),
@@ -126,7 +127,20 @@ def scan_folder(folder: Path, currency_hint: str = None) -> dict:
 
     for f in files:
         try:
-            wb = openpyxl.load_workbook(f, data_only=True, read_only=True)
+            if f.suffix.lower() == '.ods':
+                # Convert ODS to XLSX in-place via pandas
+                import pandas as pd
+                tmp_xlsx = f.with_suffix('.converted.xlsx')
+                sheets = pd.read_excel(f, engine='odf', sheet_name=None)
+                with pd.ExcelWriter(tmp_xlsx, engine='openpyxl') as writer:
+                    for sname, df in sheets.items():
+                        df.to_excel(writer, sheet_name=sname[:31], index=False)
+                wb = openpyxl.load_workbook(tmp_xlsx, data_only=True, read_only=True)
+            elif f.suffix.lower() == '.xls':
+                detected["warnings"].append(f"{f.name}: .xls non supporté, convertir en .xlsx")
+                continue
+            else:
+                wb = openpyxl.load_workbook(f, data_only=True, read_only=True)
         except Exception as e:
             detected["warnings"].append(f"Cannot read {f.name}: {e}")
             continue
