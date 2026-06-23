@@ -34,10 +34,6 @@ from modules.uw_sheet import (
 from modules.wording_clauses import (
     get_standard_package, list_all_clauses, TreatyType,
 )
-from modules.document_reader import (
-    read_document, summarize_document, find_treaty_tables,
-    merge_into_uw_header,
-)
 
 
 # ─── Page config ──────────────────────────────────────────────────────────────
@@ -81,12 +77,10 @@ col1, col2 = st.columns([2, 1])
 
 with col1:
     uploaded_files = st.file_uploader(
-        "Drag-drop fichiers courtier (Excel / ODS / CSV / PDF / Word)",
-        type=["xlsx", "xlsm", "xls", "ods", "csv", "pdf", "docx", "doc"],
+        "Drag-drop fichiers courtier (.xlsx, .xlsm, .xls, .ods, .csv)",
+        type=["xlsx", "xlsm", "xls", "ods", "csv"],
         accept_multiple_files=True,
-        help=("Multi-format : Excel structuré (xlsx/xlsm/xls/ods/csv) + "
-              "Slips PDF / Memos Word. Mix possible : statistiques en Excel + "
-              "slip en PDF dans même upload."),
+        help="Multi-format : Excel (xlsx/xlsm/xls), LibreOffice (ods), CSV.",
     )
 
 with col2:
@@ -100,59 +94,9 @@ with col2:
 tmp_folder = None
 if uploaded_files:
     tmp_folder = Path(tempfile.mkdtemp(prefix="npquote_upload_"))
-    pdf_word_files = []
-    excel_files = []
     for uf in uploaded_files:
-        out = tmp_folder / uf.name
-        out.write_bytes(uf.read())
-        suffix = out.suffix.lower()
-        if suffix in ('.pdf', '.docx', '.doc'):
-            pdf_word_files.append(out)
-        else:
-            excel_files.append(out)
-    st.success(f"✅ {len(uploaded_files)} fichiers uploadés "
-                 f"({len(excel_files)} structurés + {len(pdf_word_files)} slips/memos)")
-
-    # Lecture slips PDF/Word avec extraction auto champs
-    if pdf_word_files:
-        st.subheader("📄 Slips PDF / Memos Word — Extraction Auto")
-        extracted_docs = []
-        for f in pdf_word_files:
-            try:
-                with st.spinner(f"Lecture {f.name}..."):
-                    doc = read_document(f)
-                    extracted_docs.append(doc)
-                summary = summarize_document(doc)
-                with st.expander(f"📄 {f.name} ({summary['pages']} pages, "
-                                  f"{summary['n_treaty_tables_detected']} tables traités)"):
-                    col1, col2 = st.columns(2)
-                    with col1:
-                        st.markdown("**Champs détectés**")
-                        if summary["fields_detected"]:
-                            for k, v in summary["fields_detected"].items():
-                                st.text(f"{k}: {v[:80]}")
-                        else:
-                            st.caption("Aucun champ standard détecté")
-                    with col2:
-                        st.markdown("**Wording / Clauses trouvées**")
-                        if summary["wording_clauses"]:
-                            for c in summary["wording_clauses"]:
-                                st.text(f"• {c}")
-                        else:
-                            st.caption("Aucune clause standard trouvée")
-                    if summary["n_treaty_tables_detected"] > 0:
-                        st.markdown("**Tables structurées extraites**")
-                        for i, df_dict in enumerate(summary["treaty_tables_preview"]):
-                            st.dataframe(pd.DataFrame(df_dict))
-                    if summary["warnings"]:
-                        for w in summary["warnings"]:
-                            st.warning(w)
-                    with st.expander("Voir texte brut (extrait)"):
-                        st.text(doc.raw_text[:3000])
-            except Exception as e:
-                st.error(f"Erreur lecture {f.name}: {e}")
-        # Stocke en session pour utilisation UW Header plus tard
-        st.session_state['extracted_docs'] = extracted_docs
+        (tmp_folder / uf.name).write_bytes(uf.read())
+    st.success(f"✅ {len(uploaded_files)} fichiers uploadés")
 elif st.session_state.get('use_demo'):
     tmp_folder = Path("/tmp/al_wataniya_pack")
     if tmp_folder.exists():
