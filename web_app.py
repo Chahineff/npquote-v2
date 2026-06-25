@@ -231,40 +231,77 @@ if tmp_folder:
                                 f"{sh['rows']} lignes × {sh['cols']} cols")
 
         st.divider()
-        st.markdown("### ✏️ Mode Manuel — Saisie directe des traités")
-        st.caption("Si auto-detection rate, saisis directement les traités à analyser. "
-                    "Ces traités seront utilisés pour le compte technique + UW Sheet.")
+        st.markdown("### ✏️ Mode Manuel — Saisie HISTORIQUE BRUT")
+        st.caption("⚠️ App **calcule** le Loss Ratio à partir des sinistres + primes. "
+                    "Tu saisis : prime cédée, sinistres payés, sinistres en suspens. "
+                    "LR = (Paid + O/S) / Premium est calculé automatiquement.")
 
-        n_manual = st.number_input("Nombre de traités à saisir", 1, 20, 3,
+        n_manual = st.number_input("Nombre de traités à saisir", 1, 20, 1,
                                      key="manual_n_treaties")
         manual_treaties = []
         for i in range(int(n_manual)):
             with st.expander(f"Traité {i+1}", expanded=(i==0)):
-                cc1, cc2, cc3 = st.columns(3)
+                cc1, cc2, cc3, cc4 = st.columns(4)
                 with cc1:
-                    t_lob = st.text_input(f"LOB (fire/engineering/ga/marine/etc)",
-                                            value="fire", key=f"m_lob_{i}")
+                    t_lob = st.text_input("LOB",
+                                            value="fire", key=f"m_lob_{i}",
+                                            help="fire/engineering/ga/marine/motor")
                 with cc2:
-                    t_type = st.selectbox(f"Type",
+                    t_type = st.selectbox("Type",
                                             ["qs", "surplus", "facility", "xol"],
                                             key=f"m_type_{i}")
                 with cc3:
-                    t_premium = st.number_input(f"Prime cédée annuelle ({currency})",
-                                                  min_value=0.0, value=1_000_000.0,
-                                                  step=10000.0, key=f"m_prem_{i}")
-                cc1, cc2, cc3 = st.columns(3)
-                with cc1:
-                    t_lr = st.slider(f"LR moyen historique %", 0, 200, 50,
-                                       key=f"m_lr_{i}") / 100
-                with cc2:
-                    t_comm = st.slider(f"Commission %", 0, 50, 30,
-                                          key=f"m_c_{i}") / 100
-                with cc3:
-                    t_n_uy = st.slider(f"Nb années expérience", 1, 15, 5,
-                                          key=f"m_n_{i}")
+                    t_comm = st.number_input("Commission %", 0.0, 50.0, 30.0,
+                                                step=1.0, key=f"m_c_{i}") / 100
+                with cc4:
+                    t_n_uy = st.number_input("Nb années historique", 1, 15, 5,
+                                                key=f"m_n_{i}")
+
+                st.markdown(f"**Historique sinistre par UY** ({int(t_n_uy)} années)")
+                st.caption("Édite les cellules directement.")
+                current_year = int(annee)
+                default_data = pd.DataFrame([{
+                    "UY": current_year - int(t_n_uy) + j,
+                    "Prime cédée": 1_000_000.0,
+                    "Sinistres payés": 200_000.0,
+                    "Sinistres O/S": 50_000.0,
+                } for j in range(int(t_n_uy))])
+
+                edited = st.data_editor(
+                    default_data, key=f"m_data_{i}", num_rows="fixed",
+                    use_container_width=True,
+                    column_config={
+                        "UY": st.column_config.NumberColumn("UY",
+                                                              format="%d"),
+                        "Prime cédée": st.column_config.NumberColumn(
+                            f"Prime cédée ({currency})", format="%.0f"),
+                        "Sinistres payés": st.column_config.NumberColumn(
+                            f"Paid ({currency})", format="%.0f"),
+                        "Sinistres O/S": st.column_config.NumberColumn(
+                            f"O/S ({currency})", format="%.0f"),
+                    },
+                )
+
+                # Compute LR auto + show
+                edited_calc = edited.copy()
+                edited_calc["Incurred"] = (edited_calc["Sinistres payés"]
+                                              + edited_calc["Sinistres O/S"])
+                edited_calc["LR"] = (edited_calc["Incurred"]
+                                       / edited_calc["Prime cédée"].replace(0, 1))
+                total_prem = edited_calc["Prime cédée"].sum()
+                total_inc = edited_calc["Incurred"].sum()
+                avg_lr = total_inc / total_prem if total_prem else 0
+
+                mc1, mc2, mc3 = st.columns(3)
+                mc1.metric("LR moyen pondéré (calculé)", f"{avg_lr:.1%}")
+                mc2.metric("Prime moyenne / an",
+                            f"{total_prem / max(int(t_n_uy),1):,.0f} {currency}")
+                mc3.metric("Sinistres moyens / an",
+                            f"{total_inc / max(int(t_n_uy),1):,.0f} {currency}")
+
                 manual_treaties.append({
-                    "lob": t_lob, "treaty_type": t_type, "premium": t_premium,
-                    "lr": t_lr, "commission": t_comm, "n_uy": t_n_uy,
+                    "lob": t_lob, "treaty_type": t_type, "commission": t_comm,
+                    "n_uy": int(t_n_uy), "data": edited.to_dict('records'),
                 })
 
         if st.button("✅ Utiliser ces traités manuels",
@@ -279,31 +316,40 @@ if tmp_folder:
     if st.session_state.get('manual_treaties_configured') and not pack.treaties:
         from modules.auto_broker_parser import DetectedTreaty
         for mt in st.session_state.get('manual_treaties_data', []):
-            if mt["premium"] <= 0:
+            rows = []
+            for row in mt["data"]:
+                prem = float(row.get("Prime cédée") or 0)
+                paid = float(row.get("Sinistres payés") or 0)
+                os_l = float(row.get("Sinistres O/S") or 0)
+                incurred = paid + os_l
+                lr = incurred / prem if prem else 0
+                rows.append({
+                    "uy": str(int(row.get("UY") or 0)),
+                    "premium": prem,
+                    "commission": prem * mt["commission"],
+                    "tax": prem * 0.02,
+                    "paid": paid,
+                    "outstanding": os_l,
+                    "incurred": incurred,
+                    "loss_ratio": lr,
+                })
+            if not rows or all(r["premium"] == 0 for r in rows):
                 continue
-            df_uy = pd.DataFrame([{
-                "uy": str(int(annee) - mt["n_uy"] + j),
-                "premium": mt["premium"],
-                "commission": mt["premium"] * mt["commission"],
-                "tax": mt["premium"] * 0.02,
-                "paid": mt["premium"] * mt["lr"],
-                "outstanding": 0,
-                "incurred": mt["premium"] * mt["lr"],
-                "loss_ratio": mt["lr"],
-            } for j in range(mt["n_uy"])])
+            df_uy = pd.DataFrame(rows)
+            avg_premium = df_uy["premium"].mean()
             pack.treaties.append(DetectedTreaty(
                 lob=mt["lob"], treaty_type=mt["treaty_type"], by_uy=df_uy,
                 metadata={"source": "manual"},
             ))
             if mt["lob"] not in pack.epi_by_lob:
                 pack.epi_by_lob[mt["lob"]] = {"next": {
-                    "qs_cession": mt["premium"] if mt["treaty_type"] == "qs" else 0,
-                    "surplus": mt["premium"] if mt["treaty_type"] == "surplus" else 0,
-                    "total": mt["premium"] * 5,
+                    "qs_cession": avg_premium if mt["treaty_type"] == "qs" else 0,
+                    "surplus": avg_premium if mt["treaty_type"] == "surplus" else 0,
+                    "total": avg_premium * 5,
                     "qs_retention": 0, "facility": 0, "fac_outwards": 0,
                 }}
-        st.success(f"✅ {len(pack.treaties)} traités manuels utilisés. "
-                     "Configure la stratégie ci-dessous.")
+        st.success(f"✅ {len(pack.treaties)} traités manuels. "
+                     "LR calculé automatiquement à partir de tes données.")
         if st.button("🔄 Réinitialiser traités manuels"):
             st.session_state['manual_treaties_configured'] = False
             del st.session_state['manual_treaties_data']
