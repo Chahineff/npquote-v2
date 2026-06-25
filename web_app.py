@@ -216,16 +216,98 @@ if tmp_folder:
     col3.metric("LOB avec EPI", len(pack.epi_by_lob))
     col4.metric("Couches XOL", len(pack.xol_layers))
 
-    if not pack.treaties:
-        st.warning("⚠ Aucun traité QS/Surplus/XOL détecté automatiquement.")
-        with st.expander("Voir fichiers scannés"):
+    # Si pas de traités détectés ET pas de traités manuels en session
+    if not pack.treaties and not st.session_state.get('manual_treaties_configured'):
+        st.warning("⚠ Aucun traité détecté automatiquement.")
+
+        with st.expander("📋 Voir fichiers et feuilles scannés", expanded=True):
             for fname, finfo in pack.detection_report['files'].items():
-                st.write(f"**{fname}**")
+                st.markdown(f"**📄 {fname}**")
                 for sh in finfo.get('sheets', []):
-                    st.caption(f"  • {sh['name']} (type={sh['type']}, LOB={sh['lob']})")
-        st.info("Tip : nomme les feuilles avec mots-clés QS/Surplus/Statistics/XOL "
-                 "pour détection auto. Sinon utilise format Al Wataniya (cf demo).")
+                    icon = {"epi": "💰", "statistics": "📊",
+                            "xol": "🛡️", None: "❓"}.get(sh['type'], "📑")
+                    st.caption(f"  {icon} {sh['name']} — type=`{sh['type'] or 'inconnu'}`, "
+                                f"LOB=`{sh['lob'] or 'inconnu'}`, "
+                                f"{sh['rows']} lignes × {sh['cols']} cols")
+
+        st.divider()
+        st.markdown("### ✏️ Mode Manuel — Saisie directe des traités")
+        st.caption("Si auto-detection rate, saisis directement les traités à analyser. "
+                    "Ces traités seront utilisés pour le compte technique + UW Sheet.")
+
+        n_manual = st.number_input("Nombre de traités à saisir", 1, 20, 3,
+                                     key="manual_n_treaties")
+        manual_treaties = []
+        for i in range(int(n_manual)):
+            with st.expander(f"Traité {i+1}", expanded=(i==0)):
+                cc1, cc2, cc3 = st.columns(3)
+                with cc1:
+                    t_lob = st.text_input(f"LOB (fire/engineering/ga/marine/etc)",
+                                            value="fire", key=f"m_lob_{i}")
+                with cc2:
+                    t_type = st.selectbox(f"Type",
+                                            ["qs", "surplus", "facility", "xol"],
+                                            key=f"m_type_{i}")
+                with cc3:
+                    t_premium = st.number_input(f"Prime cédée annuelle ({currency})",
+                                                  min_value=0.0, value=1_000_000.0,
+                                                  step=10000.0, key=f"m_prem_{i}")
+                cc1, cc2, cc3 = st.columns(3)
+                with cc1:
+                    t_lr = st.slider(f"LR moyen historique %", 0, 200, 50,
+                                       key=f"m_lr_{i}") / 100
+                with cc2:
+                    t_comm = st.slider(f"Commission %", 0, 50, 30,
+                                          key=f"m_c_{i}") / 100
+                with cc3:
+                    t_n_uy = st.slider(f"Nb années expérience", 1, 15, 5,
+                                          key=f"m_n_{i}")
+                manual_treaties.append({
+                    "lob": t_lob, "treaty_type": t_type, "premium": t_premium,
+                    "lr": t_lr, "commission": t_comm, "n_uy": t_n_uy,
+                })
+
+        if st.button("✅ Utiliser ces traités manuels",
+                       use_container_width=True, type="primary"):
+            st.session_state['manual_treaties_data'] = manual_treaties
+            st.session_state['manual_treaties_configured'] = True
+            st.rerun()
+
         st.stop()
+
+    # Injection des traités manuels si configurés
+    if st.session_state.get('manual_treaties_configured') and not pack.treaties:
+        from modules.auto_broker_parser import DetectedTreaty
+        for mt in st.session_state.get('manual_treaties_data', []):
+            if mt["premium"] <= 0:
+                continue
+            df_uy = pd.DataFrame([{
+                "uy": str(int(annee) - mt["n_uy"] + j),
+                "premium": mt["premium"],
+                "commission": mt["premium"] * mt["commission"],
+                "tax": mt["premium"] * 0.02,
+                "paid": mt["premium"] * mt["lr"],
+                "outstanding": 0,
+                "incurred": mt["premium"] * mt["lr"],
+                "loss_ratio": mt["lr"],
+            } for j in range(mt["n_uy"])])
+            pack.treaties.append(DetectedTreaty(
+                lob=mt["lob"], treaty_type=mt["treaty_type"], by_uy=df_uy,
+                metadata={"source": "manual"},
+            ))
+            if mt["lob"] not in pack.epi_by_lob:
+                pack.epi_by_lob[mt["lob"]] = {"next": {
+                    "qs_cession": mt["premium"] if mt["treaty_type"] == "qs" else 0,
+                    "surplus": mt["premium"] if mt["treaty_type"] == "surplus" else 0,
+                    "total": mt["premium"] * 5,
+                    "qs_retention": 0, "facility": 0, "fac_outwards": 0,
+                }}
+        st.success(f"✅ {len(pack.treaties)} traités manuels utilisés. "
+                     "Configure la stratégie ci-dessous.")
+        if st.button("🔄 Réinitialiser traités manuels"):
+            st.session_state['manual_treaties_configured'] = False
+            del st.session_state['manual_treaties_data']
+            st.rerun()
 
     # Tableau traités détectés
     treaties_summary = []

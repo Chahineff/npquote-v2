@@ -209,6 +209,78 @@ def extract_stats_block(ws, treaty_type_kw: str, lob: str
     return pd.DataFrame(rows)
 
 
+def extract_generic_treaty_block(ws, lob: str) -> list:
+    """Détection fallback : cherche n'importe quel tableau ressemblant à
+    une stat traité (en-tête avec mots-clés Premium/LR/Commission + lignes UY).
+
+    Retourne une liste de (treaty_type, DataFrame).
+    """
+    found_blocks = []
+    treaty_keywords = ['premium', 'gnpi', 'epi', 'cession', 'ceded',
+                        'commission', 'tax', 'paid', 'outstanding',
+                        'incurred', 'loss ratio', 'lr']
+
+    # Scan column A pour trouver headers
+    for r in range(1, min(ws.max_row + 1, 200)):
+        # Header candidate : ligne avec ≥3 mots-clés treaty dans columns 1-12
+        header_cells = [str(ws.cell(row=r, column=c).value or '').lower()
+                         for c in range(1, 13)]
+        n_match = sum(1 for c in header_cells for kw in treaty_keywords if kw in c)
+        if n_match < 3:
+            continue
+
+        # Détecte le type de traité depuis contexte (lignes 1-r)
+        treaty_type = 'qs'  # default
+        for rr in range(max(1, r - 5), r):
+            v = ws.cell(row=rr, column=1).value
+            if isinstance(v, str):
+                vn = _normalize(v)
+                if 'qs' in vn or 'quote share' in vn or 'quote-share' in vn:
+                    treaty_type = 'qs'; break
+                if 'surplus' in vn:
+                    treaty_type = 'surplus'; break
+                if 'facility' in vn or 'fac' in vn:
+                    treaty_type = 'facility'; break
+                if 'xol' in vn or 'xl' in vn or 'excess' in vn:
+                    treaty_type = 'xol'; break
+
+        # Extract data rows
+        rows = []
+        for rr in range(r + 1, min(r + 30, ws.max_row + 1)):
+            cells = [ws.cell(row=rr, column=c).value for c in range(1, 13)]
+            uy_v = cells[0]
+            # Stop si total ou autre bloc
+            if isinstance(uy_v, str):
+                vn_uy = _normalize(uy_v)
+                if vn_uy in ('total', 'qs', 'surplus', 'facility', 'xol'):
+                    break
+            # UY peut être string "2025/2026" ou int 2025
+            valid_uy = False
+            uy_str = ""
+            if isinstance(uy_v, str) and any(ch.isdigit() for ch in uy_v):
+                valid_uy = True
+                uy_str = uy_v.strip()
+            elif isinstance(uy_v, (int, float)) and 1990 < int(uy_v) < 2050:
+                valid_uy = True
+                uy_str = str(int(uy_v))
+            if not valid_uy:
+                continue
+            rows.append({
+                "uy": uy_str,
+                "premium": _to_float(cells[1]),
+                "commission": _to_float(cells[2]),
+                "tax": _to_float(cells[3]),
+                "paid": _to_float(cells[4]),
+                "outstanding": _to_float(cells[5]),
+                "incurred": _to_float(cells[6]),
+                "loss_ratio": _to_float(cells[7]),
+            })
+        if len(rows) >= 1:
+            found_blocks.append((treaty_type, pd.DataFrame(rows)))
+
+    return found_blocks
+
+
 def _to_float(v):
     if v is None:
         return 0.0
@@ -340,31 +412,49 @@ def parse_renewal_folder(
         for sheet_info in finfo["sheets"]:
             sn = sheet_info["name"]
             stype = sheet_info["type"]
-            lob = sheet_info["lob"] or file_lob or "unknown"
-            if stype is None or sheet_info["rows"] == 0:
+            lob = sheet_info["lob"] or file_lob or sn.lower()[:20]
+            if sheet_info["rows"] == 0:
                 continue
             ws = wb[sn]
 
             if stype == "epi":
                 epi = extract_epi_block(ws)
-                if epi and lob != "unknown":
-                    epi_by_lob[lob] = epi
+                if epi:
+                    epi_by_lob[lob if lob != "unknown" else f"file_{fname[:15]}"] = epi
             elif stype == "statistics":
+                got_any = False
                 for tkw in ("qs", "surplus", "facility"):
                     df = extract_stats_block(ws, tkw, lob)
                     if not df.empty:
+                        got_any = True
                         treaties.append(DetectedTreaty(
                             lob=lob, treaty_type=tkw, by_uy=df,
                             metadata={"file": fname, "sheet": sn},
+                        ))
+                # Fallback : si rien trouvé via mots-clés, generic detection
+                if not got_any:
+                    for tt, df in extract_generic_treaty_block(ws, lob):
+                        treaties.append(DetectedTreaty(
+                            lob=lob, treaty_type=tt, by_uy=df,
+                            metadata={"file": fname, "sheet": sn, "fallback": True},
                         ))
             elif stype == "xol":
                 df = extract_xol_block(ws)
                 if not df.empty:
                     df['file'] = fname
                     xol_all = pd.concat([xol_all, df], ignore_index=True)
+            elif stype is None:
+                # Type non détecté : on tente quand même la fallback générique
+                for tt, df in extract_generic_treaty_block(ws, lob):
+                    treaties.append(DetectedTreaty(
+                        lob=lob, treaty_type=tt, by_uy=df,
+                        metadata={"file": fname, "sheet": sn, "fallback": True},
+                    ))
 
     if not treaties:
-        warnings_acc.append("Aucun traité QS/Surplus/Facility détecté")
+        warnings_acc.append("Aucun traité détecté même en fallback. "
+                              "Mode manuel possible : ajoute colonnes Premium / LR / Commission "
+                              "dans tes feuilles ou utilise template Al Wataniya.")
     if epi_by_lob == {}:
         warnings_acc.append("Aucun EPI extrait — vérifier structure des fichiers")
 
